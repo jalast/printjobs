@@ -3,11 +3,17 @@ package printjobs;
 import java.io.*;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.jar.JarException;
 
 /**
  * Created by Larry on 6/1/16.
  */
 public class PrintJobs {
+
+    public static class JobFormatException extends RuntimeException {
+        public JobFormatException() {}
+        public JobFormatException(String message) {super(message);}
+    }
 
     private final Map<JobType, PageRates> rates;
 
@@ -17,14 +23,14 @@ public class PrintJobs {
         rates.put(JobType.DOUBLE_SIDED, new PageRates(.10, .20));
     }
 
-    double report(InputStream inputStream, OutputStream outputStream) {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-        PrintStream printStream = new PrintStream(outputStream);
-        return reader.lines()
-                .map(s -> new Job(rates, s.split(", ")))
-                .map((job) -> { printStream.println(job); return job;})
-                .mapToDouble(Job::getCharge)
-                .sum();
+    double report(InputStream inputStream, OutputStream outputStream) throws JobFormatException {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+            PrintStream printStream = new PrintStream(outputStream);
+            return reader.lines()
+                    .map(line -> Job.createJob(rates, line))
+                    .map((job) -> { printStream.println(job); return job;})
+                    .mapToDouble(Job::getCharge)
+                    .sum();
     }
 
     /**
@@ -43,13 +49,19 @@ public class PrintJobs {
             charge = reckon(rates);
         }
 
+        static Job createJob(Map<JobType, PageRates> rates, String line) {
+            String[] args = line.trim().split("\\s*,\\s*");
+            if ( args.length != 3) throw new JobFormatException("Line must have 3 comma-separated fields");
+            try {
+                return new Job(rates, Integer.parseInt(args[0]), Integer.parseInt(args[1]), Boolean.parseBoolean(args[2]));
+            } catch (NumberFormatException e) {
+                throw new JobFormatException(e.getMessage());
+            }
+        }
+
         private double reckon(Map<JobType, PageRates> rates) {
             PageRates r = rates.get(jobType);
             return r.bwRate * (totalPages - colorPages) + r.getColorRate() * colorPages;
-        }
-
-        Job(Map<JobType, PageRates> rates, String... args) {
-            this(rates, Integer.parseInt(args[0]), Integer.parseInt(args[1]), Boolean.parseBoolean(args[2]));
         }
 
         double getCharge() {
@@ -58,7 +70,7 @@ public class PrintJobs {
 
         @Override
         public String toString() {
-            return String.format("%.2f %s %d Pages %d B&W %d Color",
+            return String.format("%7.2f %s Pages:%5d  B&W:%5d  Color:%5d",
                     charge, jobType.abbr(), totalPages, totalPages - colorPages, colorPages);
         }
     }
@@ -101,8 +113,11 @@ public class PrintJobs {
             OutputStream out = (args.length > 1 || args[1].equals("-")) ? System.out : new FileOutputStream(args[0]);
             double totalCharge = new PrintJobs().report(in, out);
             new PrintStream(out).printf("Total charges: %.2f%n", totalCharge);
+        } catch (JobFormatException e) {
+            System.err.println("Illegal input: " + e.getMessage());
+            System.exit(-1);
         } catch (Exception e) {
-            System.err.println(e.getMessage());
+            e.printStackTrace();
             System.exit(-1);
         }
     }
